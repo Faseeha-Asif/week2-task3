@@ -1,0 +1,93 @@
+
+
+from datasets import load_dataset
+from transformers import BertTokenizer, BertForSequenceClassification, Trainer, TrainingArguments
+import torch
+from sklearn.metrics import accuracy_score, f1_score
+import gradio as gr
+
+dataset = load_dataset("ag_news")
+tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+
+def tokenize(batch):
+    return tokenizer(batch["text"], padding="max_length", truncation=True, max_length=128)
+
+dataset = dataset.map(tokenize, batched=True)
+dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "label"])
+
+model = BertForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=4)
+
+training_args = TrainingArguments(
+    output_dir="./results",
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    learning_rate=2e-5,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    num_train_epochs=3,
+    weight_decay=0.01,
+    logging_dir="./logs",
+    logging_steps=50,
+)
+
+def compute_metrics(pred):
+    labels = pred.label_ids
+    preds = pred.predictions.argmax(-1)
+    acc = accuracy_score(labels, preds)
+    f1 = f1_score(labels, preds, average="weighted")
+    return {"accuracy": acc, "f1": f1}
+
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=dataset["train"],
+    eval_dataset=dataset["test"],
+    tokenizer=tokenizer,
+    compute_metrics=compute_metrics,
+)
+
+trainer.train()
+results = trainer.evaluate()
+print(results)
+
+labels = ["World", "Sports", "Business", "Sci/Tech"]
+
+def classify_news(text):
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=128)
+    outputs = model(**inputs)
+    prediction = torch.argmax(outputs.logits, dim=1).item()
+    return labels[prediction]
+
+demo = gr.Interface(
+    fn=classify_news,
+    inputs="text",
+    outputs="label",
+    title="News Topic Classifier (BERT)",
+    description="Classify news headlines into World, Sports, Business, or Sci/Tech."
+)
+
+demo.launch()
+
+
+
+
+
+Steam Lit App:
+
+import streamlit as st
+import torch
+from transformers import BertTokenizer, BertForSequenceClassification
+
+tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+model = BertForSequenceClassification.from_pretrained("./results/checkpoint-xxx")  # update checkpoint
+
+labels = ["World", "Sports", "Business", "Sci/Tech"]
+
+st.title("📰 News Topic Classifier (BERT)")
+text = st.text_area("Enter news headline:")
+
+if st.button("Classify"):
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=128)
+    outputs = model(**inputs)
+    prediction = torch.argmax(outputs.logits, dim=1).item()
+    st.success(f"Predicted Category: {labels[prediction]}")
